@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "name": "Generate Docs on Requirements Change",
+  "description": "After a requirements file is created or edited, automatically generates a documentation file in the docs/ folder based on the requirements content.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*requirements*",
+      "**/*Requirements*",
+      ".kiro/specs/*/requirements.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A requirements file was just saved. Based on its content, generate or update a corresponding documentation file in the `docs/` folder (create the folder if it doesn't exist). The documentation file should have the same base name as the requirements file but with a `.md` extension if it isn't already. The documentation should summarize the requirements in a clear, readable format suitable for developers and stakeholders. Use the content of the saved file to produce the documentation."
+  }
+}

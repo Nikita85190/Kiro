@@ -1,0 +1,271 @@
+# Implementation Plan: Expense Tracker
+
+## Overview
+
+Реализация ведётся в двух независимых частях: **бэкенд** (ASP.NET Core Web API, .NET 8) и **фронтенд** (React + Vite + TypeScript). Бэкенд строится послойно: Domain Models → Repositories → Services → Controllers. Фронтенд строится от API-клиента к компонентам и страницам. В конце части соединяются и проверяются сквозными тестами.
+
+---
+
+## Tasks
+
+- [x] 1. Настройка структуры бэкенд-проекта
+  - Создать ASP.NET Core Web API проект (`ExpenseTracker.Api`)
+  - Добавить папки: `Models`, `Repositories`, `Services`, `Controllers`, `DTOs`, `Exceptions`, `Middleware`
+  - Добавить NuGet-пакеты: `FluentValidation.AspNetCore`, `xunit`, `FluentAssertions`, `Moq`, `FsCheck.Xunit`
+  - Настроить CORS для фронтенда (localhost:5173)
+  - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 2. Domain Models и исключения
+  - [x] 2.1 Создать доменные модели `Transaction`, `TransactionType`, `Category`
+    - Реализовать классы согласно дизайну: `Id`, `Type`, `Amount`, `Date`, `CategoryId`, `Description`, `CreatedAt`
+    - _Requirements: 1.1, 1.5_
+  - [x] 2.2 Создать кастомные исключения: `NotFoundException`, `ConflictException`, `BusinessRuleException`
+    - Использовать для сигнализации бизнес-ошибок из сервисного слоя
+    - _Requirements: 2.2, 3.2, 5.2, 5.4_
+  - [x] 2.3 Создать `TransactionFilter` record
+    - Поля: `DateFrom`, `DateTo`, `CategoryId`, `Type`, `Page` (default 1), `PageSize` (default 20)
+    - _Requirements: 4.2, 4.3, 4.4, 4.5_
+
+- [x] 3. In-Memory репозитории
+  - [x] 3.1 Реализовать `ITransactionRepository` и `InMemoryTransactionRepository`
+    - `ConcurrentDictionary<Guid, Transaction>` как хранилище
+    - Методы: `GetById`, `GetAll`, `Add`, `Update`, `Delete`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1_
+  - [x] 3.2 Реализовать `ICategoryRepository` и `InMemoryCategoryRepository`
+    - Методы: `GetById`, `GetByName`, `GetAll`, `HasTransactions`, `Add`, `Update`, `Delete`
+    - `HasTransactions` проверяет наличие транзакций с данным `CategoryId` в `ITransactionRepository`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 3.3 Зарегистрировать оба репозитория как `Singleton` в `Program.cs`
+    - _Requirements: 1.1, 5.1_
+
+- [x] 4. DTO и валидация
+  - [x] 4.1 Создать все DTO-классы согласно дизайну
+    - `CreateTransactionRequest`, `UpdateTransactionRequest`, `TransactionResponse`, `PagedResult<T>`
+    - `CreateCategoryRequest`, `RenameCategoryRequest`, `CategoryResponse`
+    - `BalanceResponse`, `ReportResponse`, `CategoryBreakdown`
+    - _Requirements: 1.1, 2.1, 4.5, 6.1, 7.1_
+  - [x] 4.2 Добавить FluentValidation-валидаторы для `CreateTransactionRequest` и `UpdateTransactionRequest`
+    - Проверка: тип — `"income"` или `"expense"`, сумма > 0, дата не пустая, `CategoryId` не пустой
+    - _Requirements: 1.2, 1.3, 1.4, 2.3_
+  - [x] 4.3 Добавить FluentValidation-валидатор для `CreateCategoryRequest` и `RenameCategoryRequest`
+    - Проверка: имя не пустое и не состоит только из пробелов
+    - _Requirements: 5.1_
+
+- [x] 5. Сервисный слой
+  - [x] 5.1 Реализовать `ITransactionService` и `TransactionService`
+    - `Create`: валидация существования категории (→ `NotFoundException`), создание `Transaction`, сохранение, возврат `TransactionResponse`
+    - `Update`: поиск по id (→ `NotFoundException`), обновление полей, возврат `TransactionResponse`
+    - `Delete`: поиск по id (→ `NotFoundException`), удаление
+    - `GetAll`: применение фильтров (`DateFrom/To`, `CategoryId`, `Type`), сортировка по дате убывания, пагинация, возврат `PagedResult<TransactionResponse>`
+    - _Requirements: 1.1, 1.5, 2.1, 2.2, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [x] 5.2 Написать unit-тесты для `TransactionService`
+    - Тестировать `Create`, `Update`, `Delete`, `GetAll` с мок-репозиториями (Moq)
+    - Проверить граничные случаи: несуществующий id, несуществующая категория при создании, невалидные данные
+    - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 3.1, 3.2_
+  - [x] 5.3 Реализовать `ICategoryService` и `CategoryService`
+    - `Create`: проверка уникальности имени (→ `ConflictException`), создание, возврат `CategoryResponse`
+    - `Rename`: поиск по id (→ `NotFoundException`), проверка уникальности нового имени (→ `ConflictException`), обновление, возврат `CategoryResponse`
+    - `Delete`: поиск по id (→ `NotFoundException`), проверка наличия транзакций (→ `BusinessRuleException`), удаление
+    - `GetAll`: возврат всех категорий
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [ ]* 5.4 Написать unit-тесты для `CategoryService`
+    - Тестировать создание с дублирующимся именем, переименование с дублирующимся именем, удаление с транзакциями, успешное удаление без транзакций
+    - _Requirements: 5.2, 5.3, 5.4, 5.5_
+  - [x] 5.5 Реализовать `IAnalyticsService` и `AnalyticsService`
+    - `GetBalance`: фильтрация транзакций по периоду (если задан), расчёт `TotalIncome`, `TotalExpenses`, `Balance`
+    - `GetReport`: фильтрация по периоду, агрегация по категориям для доходов и расходов, возврат нулевых значений если транзакций нет
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [ ]* 5.6 Написать unit-тесты для `AnalyticsService`
+    - Тестировать расчёт баланса с периодом и без, отчёт с пустым периодом (нулевые значения), корректность агрегации по категориям
+    - _Requirements: 6.1, 6.2, 7.1, 7.4_
+
+- [ ] 6. Property-based тесты для сервисного слоя
+  - [ ]* 6.1 Написать property-тест: создание транзакции — round-trip
+    - **Property 1: Создание транзакции — round-trip**
+    - **Validates: Requirements 1.1, 1.5**
+    - Комментарий: `// Feature: expense-tracker, Property 1: Transaction create round-trip`
+  - [ ]* 6.2 Написать property-тест: невалидные транзакции отклоняются
+    - **Property 2: Невалидные транзакции отклоняются**
+    - **Validates: Requirements 1.2, 1.3, 2.3**
+    - Комментарий: `// Feature: expense-tracker, Property 2: Invalid transactions rejected`
+  - [ ]* 6.3 Написать property-тест: обновление сохраняет идентификатор
+    - **Property 3: Обновление транзакции сохраняет идентификатор**
+    - **Validates: Requirements 2.1**
+    - Комментарий: `// Feature: expense-tracker, Property 3: Update preserves id`
+  - [ ]* 6.4 Написать property-тест: удаление исключает транзакцию из списка
+    - **Property 4: Удаление транзакции исключает её из списка**
+    - **Validates: Requirements 3.1**
+    - Комментарий: `// Feature: expense-tracker, Property 4: Delete removes from list`
+  - [ ]* 6.5 Написать property-тест: список отсортирован по дате убывания
+    - **Property 5: Список транзакций отсортирован по дате убывания**
+    - **Validates: Requirements 4.1**
+    - Комментарий: `// Feature: expense-tracker, Property 5: List sorted descending by date`
+  - [ ]* 6.6 Написать property-тест: фильтрация по периоду
+    - **Property 6: Фильтрация по периоду возвращает только транзакции в диапазоне**
+    - **Validates: Requirements 4.2**
+    - Комментарий: `// Feature: expense-tracker, Property 6: Period filter correctness`
+  - [ ]* 6.7 Написать property-тест: фильтрация по категории и типу
+    - **Property 7: Фильтрация по категории и типу возвращает только совпадающие транзакции**
+    - **Validates: Requirements 4.3, 4.4**
+    - Комментарий: `// Feature: expense-tracker, Property 7: Category and type filter correctness`
+  - [ ]* 6.8 Написать property-тест: пагинация возвращает корректный срез
+    - **Property 8: Пагинация возвращает корректный срез**
+    - **Validates: Requirements 4.5**
+    - Комментарий: `// Feature: expense-tracker, Property 8: Pagination correctness`
+  - [ ]* 6.9 Написать property-тест: создание категории — round-trip
+    - **Property 9: Создание категории — round-trip**
+    - **Validates: Requirements 5.1**
+    - Комментарий: `// Feature: expense-tracker, Property 9: Category create round-trip`
+  - [ ]* 6.10 Написать property-тест: уникальность имени категории
+    - **Property 10: Уникальность имени категории**
+    - **Validates: Requirements 5.2**
+    - Комментарий: `// Feature: expense-tracker, Property 10: Category name uniqueness`
+  - [ ]* 6.11 Написать property-тест: переименование категории отражается на транзакциях
+    - **Property 11: Переименование категории отражается на транзакциях**
+    - **Validates: Requirements 5.3**
+    - Комментарий: `// Feature: expense-tracker, Property 11: Category rename reflects on transactions`
+  - [ ]* 6.12 Написать property-тест: баланс равен доходам минус расходы
+    - **Property 12: Баланс равен сумме доходов минус сумма расходов**
+    - **Validates: Requirements 6.1, 6.2**
+    - Комментарий: `// Feature: expense-tracker, Property 12: Balance calculation correctness`
+  - [ ]* 6.13 Написать property-тест: разбивка по категориям покрывает все транзакции
+    - **Property 13: Разбивка по категориям в отчёте покрывает все транзакции периода**
+    - **Validates: Requirements 7.1, 7.2, 7.3**
+    - Комментарий: `// Feature: expense-tracker, Property 13: Category breakdown completeness`
+
+- [x] 7. Checkpoint — бэкенд сервисный слой
+  - Убедиться, что все unit-тесты и property-тесты проходят. Задать вопросы пользователю при необходимости.
+
+- [x] 8. Контроллеры и Middleware
+  - [x] 8.1 Реализовать `TransactionsController`
+    - `GET /api/transactions` — принять query-параметры, вызвать `ITransactionService.GetAll`, вернуть `200 OK`
+    - `POST /api/transactions` — валидация, вызов `ITransactionService.Create`, вернуть `201 Created`
+    - `PUT /api/transactions/{id}` — валидация, вызов `ITransactionService.Update`, вернуть `200 OK`
+    - `DELETE /api/transactions/{id}` — вызов `ITransactionService.Delete`, вернуть `204 No Content`
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [x] 8.2 Реализовать `CategoriesController`
+    - `GET /api/categories` — вернуть `200 OK`
+    - `POST /api/categories` — вернуть `201 Created`
+    - `PUT /api/categories/{id}` — вернуть `200 OK`
+    - `DELETE /api/categories/{id}` — вернуть `204 No Content`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 8.3 Реализовать `BalanceController` и `ReportsController`
+    - `GET /api/balance` — опциональные `dateFrom`/`dateTo`, вернуть `200 OK`
+    - `GET /api/reports` — обязательные `dateFrom`/`dateTo`, вернуть `200 OK`; если транзакций нет — вернуть нулевые значения
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [x] 8.4 Реализовать `ExceptionHandlerMiddleware`
+    - Перехватывать `NotFoundException` → `404`, `ConflictException` → `409`, `BusinessRuleException` → `422`, прочие → `500`
+    - Формировать единообразный JSON-ответ: `{ "error": "...", "message": "...", "details": {...} }`
+    - _Requirements: 1.2, 1.3, 2.2, 3.2, 5.2, 5.4_
+  - [ ]* 8.5 Написать интеграционные тесты контроллеров (WebApplicationFactory)
+    - Проверить HTTP-коды, сериализацию JSON, маршрутизацию для всех эндпоинтов
+    - Проверить корректность ответов при ошибках (404, 409, 422, 400)
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.4_
+  - [ ]* 8.6 Написать property-тест: сериализация DTO — round-trip
+    - **Property 14: Сериализация DTO — round-trip**
+    - **Validates: Requirements 8.4**
+    - Комментарий: `// Feature: expense-tracker, Property 14: DTO serialization round-trip`
+    - Тестировать `TransactionResponse` и `CategoryResponse`: сериализация в JSON и десериализация возвращает эквивалентный объект
+
+- [x] 9. Checkpoint — бэкенд полностью
+  - Убедиться, что все тесты проходят, API запускается и отвечает корректно. Задать вопросы пользователю при необходимости.
+
+- [x] 10. Настройка фронтенд-проекта
+  - Создать Vite + React + TypeScript проект (`expense-tracker-frontend`)
+  - Добавить зависимости: `axios`, `react-router-dom`
+  - Добавить dev-зависимости: `vitest`, `@testing-library/react`, `@testing-library/user-event`, `msw`
+  - Создать папки: `src/api`, `src/components`, `src/hooks`, `src/pages`, `src/types`
+  - Настроить proxy в `vite.config.ts` для `/api` → `http://localhost:5000`
+  - _Requirements: 1.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 11. TypeScript-типы и API-клиент
+  - [x] 11.1 Создать TypeScript-типы в `src/types/index.ts`
+    - `Transaction`, `TransactionType`, `Category`, `BalanceResponse`, `ReportResponse`, `CategoryBreakdown`, `PagedResult<T>`, `ApiError`
+    - _Requirements: 1.1, 4.1, 5.1, 6.1, 7.1_
+  - [x] 11.2 Реализовать централизованный API-клиент в `src/api/client.ts`
+    - Настроить axios instance с базовым URL `/api`
+    - Добавить interceptor для нормализации HTTP-ошибок в тип `ApiError`
+    - _Requirements: 1.2, 2.2, 3.2, 5.2_
+  - [x] 11.3 Реализовать функции API в `src/api/transactions.ts`, `src/api/categories.ts`, `src/api/analytics.ts`
+    - `transactions.ts`: `getTransactions(filter)`, `createTransaction(data)`, `updateTransaction(id, data)`, `deleteTransaction(id)`
+    - `categories.ts`: `getCategories()`, `createCategory(data)`, `renameCategory(id, data)`, `deleteCategory(id)`
+    - `analytics.ts`: `getBalance(dateFrom?, dateTo?)`, `getReport(dateFrom, dateTo)`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 12. Кастомные хуки
+  - [x] 12.1 Реализовать `useTransactions` в `src/hooks/useTransactions.ts`
+    - Управление состоянием: список транзакций, фильтры, пагинация, загрузка, ошибка
+    - Методы: `create`, `update`, `remove`, `setFilter`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [ ]* 12.2 Написать unit-тесты для `useTransactions`
+    - Тестировать состояние загрузки, ошибки, успешные ответы с MSW-моками
+    - _Requirements: 1.1, 2.1, 3.1, 4.1_
+  - [x] 12.3 Реализовать `useCategories` в `src/hooks/useCategories.ts`
+    - Управление состоянием: список категорий, загрузка, ошибка
+    - Методы: `create`, `rename`, `remove`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [ ]* 12.4 Написать unit-тесты для `useCategories`
+    - Тестировать создание, переименование, удаление с MSW-моками; проверить обработку ошибок (409, 422)
+    - _Requirements: 5.2, 5.4_
+  - [x] 12.5 Реализовать `useAnalytics` в `src/hooks/useAnalytics.ts`
+    - Управление состоянием: баланс, отчёт, период, загрузка, ошибка
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [ ]* 12.6 Написать unit-тесты для `useAnalytics`
+    - Тестировать получение баланса с периодом и без, получение отчёта с MSW-моками
+    - _Requirements: 6.1, 6.2, 7.1_
+
+- [x] 13. UI-компоненты
+  - [x] 13.1 Реализовать `FilterBar` в `src/components/FilterBar.tsx`
+    - Поля: период (dateFrom, dateTo), категория (select), тип (income/expense/all)
+    - При изменении вызывает callback с новыми фильтрами
+    - _Requirements: 4.2, 4.3, 4.4_
+  - [x] 13.2 Реализовать `TransactionForm` в `src/components/TransactionForm.tsx`
+    - Поля: тип, сумма, дата, категория (select из `useCategories`), описание (опционально)
+    - Клиентская валидация: сумма > 0, обязательные поля заполнены
+    - Режимы: создание и редактирование (принимает начальные значения)
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.3_
+  - [ ]* 13.3 Написать unit-тесты для `TransactionForm`
+    - Тестировать отображение ошибок валидации, отправку формы, режим редактирования
+    - _Requirements: 1.2, 1.3_
+  - [x] 13.4 Реализовать `TransactionList` в `src/components/TransactionList.tsx`
+    - Таблица транзакций с колонками: дата, тип, сумма, категория, описание, действия
+    - Кнопки редактирования и удаления для каждой строки
+    - Пагинация: кнопки «Назад» / «Вперёд», отображение текущей страницы и общего числа записей
+    - _Requirements: 4.1, 4.5_
+  - [x] 13.5 Реализовать `BalanceWidget` в `src/components/BalanceWidget.tsx`
+    - Отображение `totalIncome`, `totalExpenses`, `balance`
+    - _Requirements: 6.1, 6.2_
+  - [x] 13.6 Реализовать `CategoryManager` в `src/components/CategoryManager.tsx`
+    - Список категорий с кнопками переименования и удаления
+    - Форма создания новой категории
+    - Inline-отображение ошибок (дублирование имени — 409, удаление с транзакциями — 422)
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 13.7 Реализовать `ReportView` в `src/components/ReportView.tsx`
+    - Выбор периода (dateFrom, dateTo обязательны), отображение итогов и разбивки по категориям
+    - Отображение нулевых значений если транзакций в периоде нет
+    - _Requirements: 7.1, 7.2, 7.3, 7.4_
+
+- [x] 14. Страницы и роутинг
+  - [x] 14.1 Реализовать страницы: `DashboardPage`, `TransactionsPage`, `CategoriesPage`, `ReportsPage`
+    - `DashboardPage`: `BalanceWidget` (текущий баланс без фильтра по периоду) + краткий список последних транзакций
+    - `TransactionsPage`: `FilterBar` + `TransactionList` + `TransactionForm` (модальное окно или inline)
+    - `CategoriesPage`: `CategoryManager`
+    - `ReportsPage`: `ReportView`
+    - _Requirements: 1.1, 4.1, 5.1, 6.1, 6.2, 7.1_
+  - [x] 14.2 Настроить `react-router-dom` в `App.tsx`
+    - Маршруты: `/` → `DashboardPage`, `/transactions` → `TransactionsPage`, `/categories` → `CategoriesPage`, `/reports` → `ReportsPage`
+    - Добавить навигационное меню
+    - _Requirements: 4.1, 5.1, 6.1, 7.1_
+
+- [x] 15. Checkpoint — финальная проверка
+  - Убедиться, что все тесты (бэкенд и фронтенд) проходят, бэкенд и фронтенд запускаются и взаимодействуют корректно. Задать вопросы пользователю при необходимости.
+
+---
+
+## Notes
+
+- Задачи, помеченные `*`, являются опциональными и могут быть пропущены для ускорения MVP
+- Каждая задача ссылается на конкретные требования для обеспечения трассируемости
+- Property-тесты используют FsCheck (минимум 100 итераций) и помечаются комментарием `// Feature: expense-tracker, Property N: <text>`
+- Requirement 8.1–8.3 (персистентность между сессиями) не реализуется в данной версии — данные хранятся in-memory и сбрасываются при перезапуске сервера; Requirement 8.4 (round-trip сериализации) покрывается Property 14 в задаче 8.6
+- Бэкенд запускается командой `dotnet run`, фронтенд — `npm run dev` (Vite dev server на порту 5173)
