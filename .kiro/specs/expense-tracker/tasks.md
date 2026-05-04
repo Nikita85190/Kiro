@@ -1,0 +1,271 @@
+# Implementation Plan: Expense Tracker
+
+## Overview
+
+The implementation is split into two independent parts: **backend** (ASP.NET Core Web API, .NET 8) and **frontend** (React + Vite + TypeScript). The backend is built layer by layer: Domain Models → Repositories → Services → Controllers. The frontend is built from the API client up to components and pages. At the end, both parts are connected and verified with end-to-end tests.
+
+---
+
+## Tasks
+
+- [x] 1. Backend project structure setup
+  - Create ASP.NET Core Web API project (`ExpenseTracker.Api`)
+  - Add folders: `Models`, `Repositories`, `Services`, `Controllers`, `DTOs`, `Exceptions`, `Middleware`
+  - Add NuGet packages: `FluentValidation.AspNetCore`, `xunit`, `FluentAssertions`, `Moq`, `FsCheck.Xunit`
+  - Configure CORS for frontend (localhost:5173)
+  - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 2. Domain Models and exceptions
+  - [x] 2.1 Create domain models `Transaction`, `TransactionType`, `Category`
+    - Implement classes according to design: `Id`, `Type`, `Amount`, `Date`, `CategoryId`, `Description`, `CreatedAt`
+    - _Requirements: 1.1, 1.5_
+  - [x] 2.2 Create custom exceptions: `NotFoundException`, `ConflictException`, `BusinessRuleException`
+    - Used to signal business errors from the service layer
+    - _Requirements: 2.2, 3.2, 5.2, 5.4_
+  - [x] 2.3 Create `TransactionFilter` record
+    - Fields: `DateFrom`, `DateTo`, `CategoryId`, `Type`, `Page` (default 1), `PageSize` (default 20)
+    - _Requirements: 4.2, 4.3, 4.4, 4.5_
+
+- [x] 3. In-Memory repositories
+  - [x] 3.1 Implement `ITransactionRepository` and `InMemoryTransactionRepository`
+    - `ConcurrentDictionary<Guid, Transaction>` as storage
+    - Methods: `GetById`, `GetAll`, `Add`, `Update`, `Delete`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1_
+  - [x] 3.2 Implement `ICategoryRepository` and `InMemoryCategoryRepository`
+    - Methods: `GetById`, `GetByName`, `GetAll`, `HasTransactions`, `Add`, `Update`, `Delete`
+    - `HasTransactions` checks for transactions with a given `CategoryId` in `ITransactionRepository`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 3.3 Register both repositories as `Singleton` in `Program.cs`
+    - _Requirements: 1.1, 5.1_
+
+- [x] 4. DTOs and validation
+  - [x] 4.1 Create all DTO classes according to design
+    - `CreateTransactionRequest`, `UpdateTransactionRequest`, `TransactionResponse`, `PagedResult<T>`
+    - `CreateCategoryRequest`, `RenameCategoryRequest`, `CategoryResponse`
+    - `BalanceResponse`, `ReportResponse`, `CategoryBreakdown`
+    - _Requirements: 1.1, 2.1, 4.5, 6.1, 7.1_
+  - [x] 4.2 Add FluentValidation validators for `CreateTransactionRequest` and `UpdateTransactionRequest`
+    - Validate: type is `"income"` or `"expense"`, amount > 0, date is not empty, `CategoryId` is not empty
+    - _Requirements: 1.2, 1.3, 1.4, 2.3_
+  - [x] 4.3 Add FluentValidation validator for `CreateCategoryRequest` and `RenameCategoryRequest`
+    - Validate: name is not empty and not whitespace-only
+    - _Requirements: 5.1_
+
+- [x] 5. Service layer
+  - [x] 5.1 Implement `ITransactionService` and `TransactionService`
+    - `Create`: validate category existence (→ `NotFoundException`), create `Transaction`, save, return `TransactionResponse`
+    - `Update`: find by id (→ `NotFoundException`), update fields, return `TransactionResponse`
+    - `Delete`: find by id (→ `NotFoundException`), delete
+    - `GetAll`: apply filters (`DateFrom/To`, `CategoryId`, `Type`), sort by date descending, paginate, return `PagedResult<TransactionResponse>`
+    - _Requirements: 1.1, 1.5, 2.1, 2.2, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [x] 5.2 Write unit tests for `TransactionService`
+    - Test `Create`, `Update`, `Delete`, `GetAll` with mock repositories (Moq)
+    - Verify edge cases: non-existent id, non-existent category on create, invalid data
+    - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 3.1, 3.2_
+  - [x] 5.3 Implement `ICategoryService` and `CategoryService`
+    - `Create`: check name uniqueness (→ `ConflictException`), create, return `CategoryResponse`
+    - `Rename`: find by id (→ `NotFoundException`), check new name uniqueness (→ `ConflictException`), update, return `CategoryResponse`
+    - `Delete`: find by id (→ `NotFoundException`), check for associated transactions (→ `BusinessRuleException`), delete
+    - `GetAll`: return all categories
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [ ]* 5.4 Write unit tests for `CategoryService`
+    - Test creation with duplicate name, rename with duplicate name, deletion with transactions, successful deletion without transactions
+    - _Requirements: 5.2, 5.3, 5.4, 5.5_
+  - [x] 5.5 Implement `IAnalyticsService` and `AnalyticsService`
+    - `GetBalance`: filter transactions by period (if provided), calculate `TotalIncome`, `TotalExpenses`, `Balance`
+    - `GetReport`: filter by period, aggregate by category for income and expenses, return zero values if no transactions
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [ ]* 5.6 Write unit tests for `AnalyticsService`
+    - Test balance calculation with and without period, report with empty period (zero values), correctness of per-category aggregation
+    - _Requirements: 6.1, 6.2, 7.1, 7.4_
+
+- [ ] 6. Property-based tests for the service layer
+  - [ ]* 6.1 Write property test: transaction create round-trip
+    - **Property 1: Transaction create round-trip**
+    - **Validates: Requirements 1.1, 1.5**
+    - Comment: `// Feature: expense-tracker, Property 1: Transaction create round-trip`
+  - [ ]* 6.2 Write property test: invalid transactions are rejected
+    - **Property 2: Invalid transactions are rejected**
+    - **Validates: Requirements 1.2, 1.3, 2.3**
+    - Comment: `// Feature: expense-tracker, Property 2: Invalid transactions rejected`
+  - [ ]* 6.3 Write property test: update preserves the transaction id
+    - **Property 3: Update preserves transaction id**
+    - **Validates: Requirements 2.1**
+    - Comment: `// Feature: expense-tracker, Property 3: Update preserves id`
+  - [ ]* 6.4 Write property test: delete removes transaction from the list
+    - **Property 4: Delete removes transaction from the list**
+    - **Validates: Requirements 3.1**
+    - Comment: `// Feature: expense-tracker, Property 4: Delete removes from list`
+  - [ ]* 6.5 Write property test: list is sorted by date descending
+    - **Property 5: Transaction list is sorted by date descending**
+    - **Validates: Requirements 4.1**
+    - Comment: `// Feature: expense-tracker, Property 5: List sorted descending by date`
+  - [ ]* 6.6 Write property test: period filter correctness
+    - **Property 6: Period filter returns only transactions within the range**
+    - **Validates: Requirements 4.2**
+    - Comment: `// Feature: expense-tracker, Property 6: Period filter correctness`
+  - [ ]* 6.7 Write property test: category and type filter correctness
+    - **Property 7: Category and type filter returns only matching transactions**
+    - **Validates: Requirements 4.3, 4.4**
+    - Comment: `// Feature: expense-tracker, Property 7: Category and type filter correctness`
+  - [ ]* 6.8 Write property test: pagination returns the correct slice
+    - **Property 8: Pagination returns the correct slice**
+    - **Validates: Requirements 4.5**
+    - Comment: `// Feature: expense-tracker, Property 8: Pagination correctness`
+  - [ ]* 6.9 Write property test: category create round-trip
+    - **Property 9: Category create round-trip**
+    - **Validates: Requirements 5.1**
+    - Comment: `// Feature: expense-tracker, Property 9: Category create round-trip`
+  - [ ]* 6.10 Write property test: category name uniqueness
+    - **Property 10: Category name uniqueness**
+    - **Validates: Requirements 5.2**
+    - Comment: `// Feature: expense-tracker, Property 10: Category name uniqueness`
+  - [ ]* 6.11 Write property test: category rename is reflected on transactions
+    - **Property 11: Category rename is reflected on transactions**
+    - **Validates: Requirements 5.3**
+    - Comment: `// Feature: expense-tracker, Property 11: Category rename reflects on transactions`
+  - [ ]* 6.12 Write property test: balance equals income minus expenses
+    - **Property 12: Balance equals total income minus total expenses**
+    - **Validates: Requirements 6.1, 6.2**
+    - Comment: `// Feature: expense-tracker, Property 12: Balance calculation correctness`
+  - [ ]* 6.13 Write property test: category breakdown covers all transactions
+    - **Property 13: Category breakdown in report covers all transactions in the period**
+    - **Validates: Requirements 7.1, 7.2, 7.3**
+    - Comment: `// Feature: expense-tracker, Property 13: Category breakdown completeness`
+
+- [x] 7. Checkpoint — backend service layer
+  - Ensure all unit tests and property tests pass. Ask the user questions if needed.
+
+- [x] 8. Controllers and Middleware
+  - [x] 8.1 Implement `TransactionsController`
+    - `GET /api/transactions` — accept query parameters, call `ITransactionService.GetAll`, return `200 OK`
+    - `POST /api/transactions` — validate, call `ITransactionService.Create`, return `201 Created`
+    - `PUT /api/transactions/{id}` — validate, call `ITransactionService.Update`, return `200 OK`
+    - `DELETE /api/transactions/{id}` — call `ITransactionService.Delete`, return `204 No Content`
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [x] 8.2 Implement `CategoriesController`
+    - `GET /api/categories` — return `200 OK`
+    - `POST /api/categories` — return `201 Created`
+    - `PUT /api/categories/{id}` — return `200 OK`
+    - `DELETE /api/categories/{id}` — return `204 No Content`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 8.3 Implement `BalanceController` and `ReportsController`
+    - `GET /api/balance` — optional `dateFrom`/`dateTo`, return `200 OK`
+    - `GET /api/reports` — required `dateFrom`/`dateTo`, return `200 OK`; return zero values if no transactions found
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [x] 8.4 Implement `ExceptionHandlerMiddleware`
+    - Catch `NotFoundException` → `404`, `ConflictException` → `409`, `BusinessRuleException` → `422`, others → `500`
+    - Produce a uniform JSON response: `{ "error": "...", "message": "...", "details": {...} }`
+    - _Requirements: 1.2, 1.3, 2.2, 3.2, 5.2, 5.4_
+  - [ ]* 8.5 Write integration tests for controllers (WebApplicationFactory)
+    - Verify HTTP status codes, JSON serialization, routing for all endpoints
+    - Verify correct error responses (404, 409, 422, 400)
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.4_
+  - [ ]* 8.6 Write property test: DTO serialization round-trip
+    - **Property 14: DTO serialization round-trip**
+    - **Validates: Requirements 8.4**
+    - Comment: `// Feature: expense-tracker, Property 14: DTO serialization round-trip`
+    - Test `TransactionResponse` and `CategoryResponse`: serializing to JSON and deserializing returns an equivalent object
+
+- [x] 9. Checkpoint — backend complete
+  - Ensure all tests pass, API starts and responds correctly. Ask the user questions if needed.
+
+- [x] 10. Frontend project setup
+  - Create Vite + React + TypeScript project (`expense-tracker-frontend`)
+  - Add dependencies: `axios`, `react-router-dom`
+  - Add dev dependencies: `vitest`, `@testing-library/react`, `@testing-library/user-event`, `msw`
+  - Create folders: `src/api`, `src/components`, `src/hooks`, `src/pages`, `src/types`
+  - Configure proxy in `vite.config.ts` for `/api` → `http://localhost:5000`
+  - _Requirements: 1.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 11. TypeScript types and API client
+  - [x] 11.1 Create TypeScript types in `src/types/index.ts`
+    - `Transaction`, `TransactionType`, `Category`, `BalanceResponse`, `ReportResponse`, `CategoryBreakdown`, `PagedResult<T>`, `ApiError`
+    - _Requirements: 1.1, 4.1, 5.1, 6.1, 7.1_
+  - [x] 11.2 Implement centralized API client in `src/api/client.ts`
+    - Configure axios instance with base URL `/api`
+    - Add interceptor to normalize HTTP errors to the `ApiError` type
+    - _Requirements: 1.2, 2.2, 3.2, 5.2_
+  - [x] 11.3 Implement API functions in `src/api/transactions.ts`, `src/api/categories.ts`, `src/api/analytics.ts`
+    - `transactions.ts`: `getTransactions(filter)`, `createTransaction(data)`, `updateTransaction(id, data)`, `deleteTransaction(id)`
+    - `categories.ts`: `getCategories()`, `createCategory(data)`, `renameCategory(id, data)`, `deleteCategory(id)`
+    - `analytics.ts`: `getBalance(dateFrom?, dateTo?)`, `getReport(dateFrom, dateTo)`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
+
+- [x] 12. Custom hooks
+  - [x] 12.1 Implement `useTransactions` in `src/hooks/useTransactions.ts`
+    - Manage state: transaction list, filters, pagination, loading, error
+    - Methods: `create`, `update`, `remove`, `setFilter`
+    - _Requirements: 1.1, 2.1, 3.1, 4.1, 4.2, 4.3, 4.4, 4.5_
+  - [ ]* 12.2 Write unit tests for `useTransactions`
+    - Test loading state, errors, successful responses with MSW mocks
+    - _Requirements: 1.1, 2.1, 3.1, 4.1_
+  - [x] 12.3 Implement `useCategories` in `src/hooks/useCategories.ts`
+    - Manage state: category list, loading, error
+    - Methods: `create`, `rename`, `remove`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [ ]* 12.4 Write unit tests for `useCategories`
+    - Test create, rename, delete with MSW mocks; verify error handling (409, 422)
+    - _Requirements: 5.2, 5.4_
+  - [x] 12.5 Implement `useAnalytics` in `src/hooks/useAnalytics.ts`
+    - Manage state: balance, report, period, loading, error
+    - _Requirements: 6.1, 6.2, 7.1, 7.2, 7.3, 7.4_
+  - [ ]* 12.6 Write unit tests for `useAnalytics`
+    - Test balance retrieval with and without period, report retrieval with MSW mocks
+    - _Requirements: 6.1, 6.2, 7.1_
+
+- [x] 13. UI components
+  - [x] 13.1 Implement `FilterBar` in `src/components/FilterBar.tsx`
+    - Fields: period (dateFrom, dateTo), category (select), type (income/expense/all)
+    - Calls callback with new filters on change
+    - _Requirements: 4.2, 4.3, 4.4_
+  - [x] 13.2 Implement `TransactionForm` in `src/components/TransactionForm.tsx`
+    - Fields: type, amount, date, category (select from `useCategories`), description (optional)
+    - Client-side validation: amount > 0, required fields are filled
+    - Modes: create and edit (accepts initial values)
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.3_
+  - [ ]* 13.3 Write unit tests for `TransactionForm`
+    - Test validation error display, form submission, edit mode
+    - _Requirements: 1.2, 1.3_
+  - [x] 13.4 Implement `TransactionList` in `src/components/TransactionList.tsx`
+    - Transaction table with columns: date, type, amount, category, description, actions
+    - Edit and delete buttons for each row
+    - Pagination: Previous / Next buttons, display current page and total record count
+    - _Requirements: 4.1, 4.5_
+  - [x] 13.5 Implement `BalanceWidget` in `src/components/BalanceWidget.tsx`
+    - Display `totalIncome`, `totalExpenses`, `balance`
+    - _Requirements: 6.1, 6.2_
+  - [x] 13.6 Implement `CategoryManager` in `src/components/CategoryManager.tsx`
+    - Category list with rename and delete buttons
+    - Form for creating a new category
+    - Inline error display (duplicate name — 409, deletion with transactions — 422)
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 13.7 Implement `ReportView` in `src/components/ReportView.tsx`
+    - Period selection (dateFrom, dateTo required), display totals and per-category breakdown
+    - Display zero values if no transactions exist in the period
+    - _Requirements: 7.1, 7.2, 7.3, 7.4_
+
+- [x] 14. Pages and routing
+  - [x] 14.1 Implement pages: `DashboardPage`, `TransactionsPage`, `CategoriesPage`, `ReportsPage`
+    - `DashboardPage`: `BalanceWidget` (current balance without period filter) + brief list of recent transactions
+    - `TransactionsPage`: `FilterBar` + `TransactionList` + `TransactionForm` (modal or inline)
+    - `CategoriesPage`: `CategoryManager`
+    - `ReportsPage`: `ReportView`
+    - _Requirements: 1.1, 4.1, 5.1, 6.1, 6.2, 7.1_
+  - [x] 14.2 Configure `react-router-dom` in `App.tsx`
+    - Routes: `/` → `DashboardPage`, `/transactions` → `TransactionsPage`, `/categories` → `CategoriesPage`, `/reports` → `ReportsPage`
+    - Add navigation menu
+    - _Requirements: 4.1, 5.1, 6.1, 7.1_
+
+- [x] 15. Checkpoint — final verification
+  - Ensure all tests (backend and frontend) pass, backend and frontend start and interact correctly. Ask the user questions if needed.
+
+---
+
+## Notes
+
+- Tasks marked with `*` are optional and may be skipped to speed up MVP delivery
+- Each task references specific requirements to ensure traceability
+- Property tests use FsCheck (minimum 100 iterations) and are annotated with `// Feature: expense-tracker, Property N: <text>`
+- Requirements 8.1–8.3 (cross-session persistence) are not implemented in this version — data is stored in-memory and resets on server restart; Requirement 8.4 (serialization round-trip) is covered by Property 14 in task 8.6
+- Backend is started with `dotnet run`, frontend with `npm run dev` (Vite dev server on port 5173)
